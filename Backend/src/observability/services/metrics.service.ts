@@ -2,6 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import * as promClient from 'prom-client';
 
+export interface ObservabilityAlert {
+  name: string;
+  severity: 'warning';
+  message: string;
+  occurredAt: string;
+}
+
 /**
  * Prometheus metrics service
  * Tracks key application metrics for monitoring and alerting.
@@ -11,6 +18,9 @@ import * as promClient from 'prom-client';
  */
 @Injectable()
 export class MetricsService {
+  private readonly alertWindowMs = 5 * 60 * 1000;
+  private recentAlerts: Array<ObservabilityAlert & { timestamp: number }> = [];
+
   // HTTP Metrics
   private httpRequestDuration: promClient.Histogram;
   private httpRequestTotal: promClient.Counter;
@@ -277,6 +287,7 @@ export class MetricsService {
     errorType: string,
     correlationId: string,
   ) {
+    this.addAlert('http-error', `${method} ${route} failed: ${errorType}`);
     this.httpRequestErrors.inc({
       method,
       route,
@@ -336,11 +347,7 @@ export class MetricsService {
     this.jobsActive.inc({ job_name: jobName, correlation_id: correlationId });
   }
 
-  recordJobCompleted(
-    jobName: string,
-    duration: number,
-    correlationId: string,
-  ) {
+  recordJobCompleted(jobName: string, duration: number, correlationId: string) {
     this.jobDuration.observe(
       { job_name: jobName, status: 'success', correlation_id: correlationId },
       duration,
@@ -363,6 +370,7 @@ export class MetricsService {
     errorType: string,
     correlationId: string,
   ) {
+    this.addAlert('job-failure', `${jobName} failed: ${errorType}`);
     this.jobDuration.observe(
       { job_name: jobName, status: 'failed', correlation_id: correlationId },
       duration,
@@ -404,6 +412,10 @@ export class MetricsService {
     errorType: string,
     correlationId: string,
   ) {
+    this.addAlert(
+      'database-error',
+      `${operation} on ${table} failed: ${errorType}`,
+    );
     this.databaseQueryErrors.inc({
       operation,
       table,
@@ -448,6 +460,40 @@ export class MetricsService {
    */
   async getMetrics(): Promise<string> {
     return promClient.register.metrics();
+  }
+
+  getActiveAlerts(): ObservabilityAlert[] {
+    this.pruneAlerts();
+    return this.recentAlerts
+      .map((alert) => ({
+        name: alert.name,
+        severity: alert.severity,
+        message: alert.message,
+        occurredAt: alert.occurredAt,
+      }))
+      .reverse();
+  }
+
+  private addAlert(name: string, message: string): void {
+    this.pruneAlerts();
+    const timestamp = Date.now();
+    this.recentAlerts.push({
+      name,
+      severity: 'warning',
+      message,
+      occurredAt: new Date(timestamp).toISOString(),
+      timestamp,
+    });
+    if (this.recentAlerts.length > 1000) {
+      this.recentAlerts.splice(0, this.recentAlerts.length - 1000);
+    }
+  }
+
+  private pruneAlerts(): void {
+    const cutoff = Date.now() - this.alertWindowMs;
+    this.recentAlerts = this.recentAlerts.filter(
+      (alert) => alert.timestamp >= cutoff,
+    );
   }
 
   /**

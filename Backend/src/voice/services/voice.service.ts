@@ -5,6 +5,7 @@ import { Repository } from 'typeorm';
 import { InjectQueue } from '@nestjs/bull';
 import type { Queue } from 'bull';
 import * as crypto from 'crypto';
+import { createReadStream } from 'fs';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { JobStatus, JobType, VoiceJob } from '../entities/voice-job.entity';
@@ -23,10 +24,18 @@ export class VoiceService {
   }
 
   async processSTT(file: {
-    buffer: Buffer;
+    buffer?: Buffer;
+    path?: string;
     originalname: string;
   }): Promise<string> {
-    const audioHash = this.generateHash(file.buffer);
+    let audioHash: string;
+    if (file.path) {
+      audioHash = await this.generateFileHash(file.path);
+    } else if (file.buffer) {
+      audioHash = this.generateHash(file.buffer);
+    } else {
+      throw new Error('Audio upload has no readable content');
+    }
 
     // Check for duplicate
     const existingJob = await this.voiceJobRepository.findOne({
@@ -34,15 +43,29 @@ export class VoiceService {
     });
 
     if (existingJob) {
+      if (file.path) {
+        await fs.unlink(file.path);
+      }
       return existingJob.id;
     }
 
-    // Save file
-    const uploadDir = path.join(process.cwd(), 'uploads', 'audio');
-    await fs.mkdir(uploadDir, { recursive: true });
-    const fileName = `${Date.now()}-${file.originalname}`;
-    const filePath = path.join(uploadDir, fileName);
-    await fs.writeFile(filePath, file.buffer);
+    let filePath = file.path;
+    if (filePath) {
+      const storedFilePath = `${filePath}${path.extname(file.originalname)}`;
+      await fs.rename(filePath, storedFilePath);
+      filePath = storedFilePath;
+    }
+
+    if (!filePath) {
+      if (!file.buffer) {
+        throw new Error('Audio upload has no readable content');
+      }
+      const uploadDir = path.join(process.cwd(), 'uploads', 'audio');
+      await fs.mkdir(uploadDir, { recursive: true });
+      const fileName = `${Date.now()}-${path.basename(file.originalname)}`;
+      filePath = path.join(uploadDir, fileName);
+      await fs.writeFile(filePath, file.buffer);
+    }
 
     // Create job
     const job = this.voiceJobRepository.create({
@@ -58,6 +81,16 @@ export class VoiceService {
     await this.voiceQueue.add('process-stt', { jobId: job.id });
 
     return job.id;
+  }
+
+  private async generateFileHash(filePath: string): Promise<string> {
+    const hash = crypto.createHash('sha256');
+    for await (const chunk of createReadStream(
+      filePath,
+    ) as AsyncIterable<Buffer>) {
+      hash.update(chunk);
+    }
+    return hash.digest('hex');
   }
 
   async processTTS(text: string): Promise<string> {

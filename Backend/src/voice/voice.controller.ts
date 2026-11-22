@@ -10,6 +10,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import * as path from 'path';
 import { VoiceService } from './services/voice.service';
 import { IsString, IsNotEmpty } from 'class-validator';
 
@@ -25,9 +26,13 @@ export class VoiceController {
   constructor(private readonly voiceService: VoiceService) {}
 
   @Post('stt/upload')
-  @UseInterceptors(FileInterceptor('audio'))
+  @UseInterceptors(
+    FileInterceptor('audio', {
+      dest: path.join(process.cwd(), 'uploads', 'audio'),
+    }),
+  )
   async uploadAudio(
-    @UploadedFile() file: { buffer: Buffer; originalname: string },
+    @UploadedFile() file: { path: string; originalname: string },
   ): Promise<{ jobId: string }> {
     if (!file) {
       throw new BadRequestException('No audio file provided');
