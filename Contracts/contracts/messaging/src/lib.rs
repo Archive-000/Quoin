@@ -9,7 +9,8 @@ use shared::governance::{GovernanceManager, UpgradeProposal};
 use shared::nonce::NonceManager;
 use shared::reentrancy_guard::ReentrancyGuard;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env, Map, String,
+    contract, contractevent, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    Map, String,
     Symbol, Vec, xdr::ToXdr,
 };
 
@@ -68,7 +69,7 @@ pub struct RateLimitConfig {
 }
 
 /// Event emitted when a message is sent
-#[contracttype]
+#[contractevent(topics = ["msg_sent"])]
 #[derive(Clone, Debug)]
 pub struct MessageSent {
     pub message_id: u64,
@@ -454,8 +455,7 @@ impl UpgradeableMessagingContract {
             payload_length: payload_len as u32,
         };
 
-        env.events()
-            .publish((symbol_short!("msg_sent"),), message_sent_event);
+        message_sent_event.publish(&env);
 
         ReentrancyGuard::exit(&env);
         Ok(message_id)
