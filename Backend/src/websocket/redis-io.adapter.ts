@@ -4,10 +4,14 @@ import { createClient, RedisClientType } from 'redis';
 import { Logger } from '@nestjs/common';
 import { MetricsService } from '../observability/services/metrics.service';
 import { TracingService } from '../observability/services/tracing.service';
-import { Socket } from 'socket.io';
 
 function maskRedisUrl(url: string): string {
   return url.replace(/(rediss?:\/\/[^:@\s]*:)[^@\s]+(@)/gi, '$1***$2');
+}
+
+function positiveEnvInt(key: string, fallback: number): number {
+  const value = parseInt(process.env[key] || '', 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 type RedisConnectionState =
@@ -26,6 +30,10 @@ export class RedisIoAdapter extends IoAdapter {
   private tracingService: TracingService | null = null;
   private pubClient: RedisClientType | undefined;
   private subClient: RedisClientType | undefined;
+  private activeConnections = 0;
+  private readonly MAX_CONNECTIONS = positiveEnvInt('WS_MAX_CONNECTIONS', 10_000);
+  private readonly PING_INTERVAL_MS = positiveEnvInt('WS_PING_INTERVAL_MS', 25_000);
+  private readonly PING_TIMEOUT_MS = positiveEnvInt('WS_PING_TIMEOUT_MS', 20_000);
 
   /**
    * Dedicated client used for orphan-detection sweeps.  Kept separate
@@ -194,7 +202,25 @@ export class RedisIoAdapter extends IoAdapter {
   }
 
   createIOServer(port: number, options?: any) {
-    const server = super.createIOServer(port, options);
+    const server = super.createIOServer(port, {
+      ...options,
+      pingInterval: this.PING_INTERVAL_MS,
+      pingTimeout: this.PING_TIMEOUT_MS,
+      allowRequest: (req: any, cb: (err: Error | null, allow?: boolean) => void) => {
+        if (this.activeConnections >= this.MAX_CONNECTIONS) {
+          this.logger.warn(
+            `WebSocket connection limit reached (${this.activeConnections}/${this.MAX_CONNECTIONS})`,
+          );
+          cb(null, false);
+          return;
+        }
+        if (typeof options?.allowRequest === 'function') {
+          options.allowRequest(req, cb);
+          return;
+        }
+        cb(null, true);
+      },
+    });
 
     if (this.adapterConstructor) {
       server.adapter(this.adapterConstructor);
@@ -206,6 +232,7 @@ export class RedisIoAdapter extends IoAdapter {
     }
 
     server.on('connection', (socket) => {
+      this.activeConnections++;
       const namespace = socket.nsp?.name || '/';
       const correlationId = socket?.handshake?.auth?.correlationId || '';
       const userId = socket?.handshake?.auth?.userId || '';
@@ -214,20 +241,18 @@ export class RedisIoAdapter extends IoAdapter {
         this.metricsService.recordWebSocketConnection(namespace, correlationId);
       }
 
-      // Register a per-socket heartbeat so the orphan sweep can detect
-      // connections that survived a server crash or missed disconnect.
-      this.registerSocketHeartbeat(socket.id, userId).catch(() => {});
-    });
+      socket.once('disconnect', (reason: string) => {
+        this.activeConnections = Math.max(0, this.activeConnections - 1);
+        if (this.metricsService) {
+          this.metricsService.recordWebSocketDisconnection(
+            namespace,
+            reason || 'client_disconnect',
+            correlationId,
+          );
+        }
+      });
 
-    server.on('disconnecting', (_socket: Socket) => {
-      const namespace = (_socket.nsp as any)?.name || '/';
-      if (this.metricsService) {
-        this.metricsService.recordWebSocketDisconnection(
-          namespace,
-          'server_disconnecting',
-          '',
-        );
-      }
+      this.registerSocketHeartbeat(socket.id, userId).catch(() => {});
     });
 
     server.on('error', (err: Error) => {

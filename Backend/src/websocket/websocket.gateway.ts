@@ -12,9 +12,17 @@ import { PresenceService } from './presence.service';
 import { MetricsService } from '../observability/services/metrics.service';
 import { TracingService } from '../observability/services/tracing.service';
 
+const positiveEnvInt = (key: string, fallback: number): number => {
+  const value = parseInt(process.env[key] || '', 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+
 @WebSocketGateway({
   cors: { origin: '*' },
   transports: ['websocket', 'polling'],
+  pingInterval: positiveEnvInt('WS_PING_INTERVAL_MS', 25_000),
+  pingTimeout: positiveEnvInt('WS_PING_TIMEOUT_MS', 20_000),
+  maxHttpBufferSize: positiveEnvInt('WS_MAX_HTTP_BUFFER_SIZE', 1_000_000),
 })
 export class WebsocketGateway
   implements OnGatewayConnection, OnGatewayDisconnect, OnModuleInit, OnModuleDestroy

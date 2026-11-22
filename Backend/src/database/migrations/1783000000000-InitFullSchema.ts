@@ -3,27 +3,61 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 export class InitFullSchema1783000000000 implements MigrationInterface {
   name = 'InitFullSchema1783000000000';
 
+  private async createEnumIfMissing(
+    queryRunner: QueryRunner,
+    name: string,
+    values: string,
+  ): Promise<void> {
+    await queryRunner.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_type t
+          JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE n.nspname = 'public' AND t.typname = '${name}'
+        ) THEN
+          CREATE TYPE "public"."${name}" AS ENUM(${values});
+        END IF;
+      END $$;
+    `);
+  }
+
   public async up(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(
-      `CREATE TYPE IF NOT EXISTS "public"."workflows_type_enum" AS ENUM('contract_deployment', 'trade_execution', 'ai_job_chain', 'indexing_verification', 'portfolio_update', 'reward_grant')`,
+    await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`);
+    await this.createEnumIfMissing(
+      queryRunner,
+      'workflows_type_enum',
+      `'contract_deployment', 'trade_execution', 'ai_job_chain', 'indexing_verification', 'portfolio_update', 'reward_grant'`,
     );
-    await queryRunner.query(
-      `CREATE TYPE IF NOT EXISTS "public"."workflows_state_enum" AS ENUM('pending', 'running', 'completed', 'failed', 'cancelled', 'compensating', 'compensated')`,
+    await this.createEnumIfMissing(
+      queryRunner,
+      'workflows_state_enum',
+      `'pending', 'running', 'completed', 'failed', 'cancelled', 'compensating', 'compensated'`,
     );
-    await queryRunner.query(
-      `CREATE TYPE IF NOT EXISTS "public"."workflow_steps_state_enum" AS ENUM('pending', 'running', 'completed', 'failed', 'skipped', 'compensating', 'compensated')`,
+    await this.createEnumIfMissing(
+      queryRunner,
+      'workflow_steps_state_enum',
+      `'pending', 'running', 'completed', 'failed', 'skipped', 'compensating', 'compensated'`,
     );
-    await queryRunner.query(
-      `CREATE TYPE IF NOT EXISTS "public"."job_type_enum" AS ENUM('stt', 'tts')`,
+    await this.createEnumIfMissing(
+      queryRunner,
+      'job_type_enum',
+      `'stt', 'tts'`,
     );
-    await queryRunner.query(
-      `CREATE TYPE IF NOT EXISTS "public"."job_status_enum" AS ENUM('pending', 'processing', 'completed', 'failed')`,
+    await this.createEnumIfMissing(
+      queryRunner,
+      'job_status_enum',
+      `'pending', 'processing', 'completed', 'failed'`,
     );
-    await queryRunner.query(
-      `CREATE TYPE IF NOT EXISTS "public"."feature_context_enum" AS ENUM('academy', 'trading', 'general', 'community')`,
+    await this.createEnumIfMissing(
+      queryRunner,
+      'feature_context_enum',
+      `'academy', 'trading', 'general', 'community'`,
     );
-    await queryRunner.query(
-      `CREATE TYPE IF NOT EXISTS "public"."conversation_state_enum" AS ENUM('listening', 'thinking', 'responding', 'interrupted', 'idle', 'stale', 'terminated')`,
+    await this.createEnumIfMissing(
+      queryRunner,
+      'conversation_state_enum',
+      `'listening', 'thinking', 'responding', 'interrupted', 'idle', 'stale', 'terminated'`,
     );
 
     await queryRunner.query(

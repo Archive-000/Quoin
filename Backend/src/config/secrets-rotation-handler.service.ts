@@ -154,8 +154,7 @@ export class SecretsRotationHandlerService {
    * @param newValue The new value to apply.
    */
   private applySecretValue(secretKey: string, newValue: string): void {
-    // Update process.env for the current process
-    process.env[secretKey] = newValue;
+    this.configService.set(secretKey, newValue);
 
     // Note: In a production environment with multiple instances, you would also:
     // 1. Update the secret store (Vault, AWS Secrets Manager, etc.)
@@ -188,7 +187,7 @@ export class SecretsRotationHandlerService {
     }
 
     // 2. Get the old value for audit (masked)
-    const oldValue = process.env[secretKey];
+    const oldValue = this.configService.get<string>(secretKey) ?? process.env[secretKey];
     const maskedOldValue = this.maskingService.mask(oldValue || '[none]');
 
     // 3. Apply the new value
