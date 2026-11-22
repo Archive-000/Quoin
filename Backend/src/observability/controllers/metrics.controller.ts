@@ -20,4 +20,9 @@ export class MetricsController {
     res.set('Content-Type', this.metricsService.getMetricsContentType());
     res.send(metrics);
   }
+
+  @Get('alerts')
+  getAlerts() {
+    return this.metricsService.getActiveAlerts();
+  }
 }
