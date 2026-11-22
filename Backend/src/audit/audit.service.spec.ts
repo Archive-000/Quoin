@@ -171,4 +171,31 @@ describe('AuditService', () => {
       ]),
     });
   });
+
+  it('should retry persistence when the database write fails transiently', async () => {
+    const saveMock = repo.save as jest.Mock;
+    saveMock.mockRejectedValueOnce(new Error('connection terminated'));
+
+    const result = await service.logAction('USER_CREATED', 'user1');
+
+    expect(saveMock).toHaveBeenCalledTimes(2);
+    expect(result).toEqual(
+      expect.objectContaining({
+        action_type: 'USER_CREATED',
+        actor_id: 'user1',
+      }),
+    );
+    expect(logs).toHaveLength(1);
+  });
+
+  it('should surface the error when persistence keeps failing', async () => {
+    const saveMock = repo.save as jest.Mock;
+    saveMock.mockRejectedValue(new Error('database unavailable'));
+
+    await expect(service.logAction('USER_CREATED', 'user1')).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(saveMock).toHaveBeenCalledTimes(3);
+    expect(logs).toHaveLength(0);
+  });
 });

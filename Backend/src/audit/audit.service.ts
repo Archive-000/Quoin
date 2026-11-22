@@ -15,6 +15,12 @@ export interface AuditVerificationResult {
   }>;
 }
 
+/** Number of attempts made when persisting an audit entry. */
+const AUDIT_WRITE_MAX_ATTEMPTS = 3;
+
+/** Base backoff (ms) between audit persistence attempts. */
+const AUDIT_WRITE_RETRY_DELAY_MS = 50;
+
 @Injectable()
 export class AuditService {
   constructor(
@@ -26,6 +32,35 @@ export class AuditService {
   ) {}
 
   async logAction(
+    action_type: string,
+    actor_id: string,
+    entity_id?: string,
+    metadata?: Record<string, any>,
+  ): Promise<AuditLog> {
+    // Audit writes must never be silently dropped: retry transient database
+    // failures a few times before surfacing the error to the caller.
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < AUDIT_WRITE_MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.persistEntry(
+          action_type,
+          actor_id,
+          entity_id,
+          metadata,
+        );
+      } catch (error) {
+        lastError = error;
+        if (attempt < AUDIT_WRITE_MAX_ATTEMPTS - 1) {
+          await this.delay(AUDIT_WRITE_RETRY_DELAY_MS * (attempt + 1));
+        }
+      }
+    }
+
+    throw lastError;
+  }
+
+  private async persistEntry(
     action_type: string,
     actor_id: string,
     entity_id?: string,
@@ -45,6 +80,10 @@ export class AuditService {
     log.hash = this.computeHash(log);
     log.signature = this.computeSignature(log);
     return this.auditRepo.save(log);
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // Add this for tests
