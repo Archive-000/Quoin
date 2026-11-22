@@ -45,6 +45,7 @@ export class OpenAiProvider implements AiProvider, OnModuleInit {
         'https://api.openai.com/v1/chat/completions',
         {
           model: this.config.get<string>('OPENAI_MODEL') ?? 'gpt-4',
+          temperature: 0,
           messages: [{ role: 'user', content: prompt }],
         },
         {
@@ -53,10 +54,14 @@ export class OpenAiProvider implements AiProvider, OnModuleInit {
         },
       );
 
+      const response: unknown = res.data.choices?.[0]?.message?.content;
+      if (typeof response !== 'string' || !response.trim()) {
+        throw new Error('AI provider returned no text');
+      }
       this.recordSuccess();
 
       return {
-        response: res.data.choices[0].message.content as string,
+        response,
         tokensUsed: res.data.usage?.total_tokens ?? 0,
       };
     } catch (err) {

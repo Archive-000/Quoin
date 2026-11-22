@@ -18,6 +18,24 @@
       retries: 5
       start_period: 10s
 
+  db-backup:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: ${DB_USERNAME:-postgres}
+      PGPASSWORD: ${DB_PASSWORD:-password}
+      PGDATABASE: ${DB_DATABASE:-stellara_db}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-7}
+    entrypoint: ["/bin/sh", "/scripts/backup-postgres.sh"]
+    volumes:
+      - postgres_backups:/backups
+      - ./scripts/backup-postgres.sh:/scripts/backup-postgres.sh:ro
+
   redis:
     image: redis:7-alpine
     container_name: stellara_redis
@@ -53,3 +71,4 @@
 volumes:
   postgres_data:
   redis_data:
+  postgres_backups:
