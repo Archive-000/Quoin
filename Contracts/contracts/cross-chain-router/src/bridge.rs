@@ -42,9 +42,18 @@ pub enum BridgeError {
 #[contract]
 pub struct StellaraBridge;
 
+fn validate_address(address: &Address) {
+    if !address.exists() {
+        panic!("invalid address");
+    }
+}
+
 #[contractimpl]
 impl StellaraBridge {
     pub fn initialize(env: Env, admin: Address, fee_collector: Address, validator_threshold: u32, chain_id: u32) {
+        validate_address(&admin);
+        validate_address(&fee_collector);
+
         if env.storage().persistent().has(&symbol_short!("config")) {
             panic!("Already initialized");
         }
@@ -66,6 +75,9 @@ impl StellaraBridge {
     }
 
     pub fn deposit(env: Env, from: Address, asset: Address, amount: i128, dest_chain: u32, recipient: Address) -> BytesN<32> {
+        validate_address(&from);
+        validate_address(&asset);
+        validate_address(&recipient);
         from.require_auth();
         let config: BridgeConfig = Self::get_config_internal(&env);
         if config.is_paused {
@@ -94,6 +106,8 @@ impl StellaraBridge {
     }
 
     pub fn withdraw(env: Env, to: Address, asset: Address, amount: i128, source_chain: u32, nonce: u64, signatures: Vec<BytesN<64>>) -> BytesN<32> {
+        validate_address(&to);
+        validate_address(&asset);
         let config: BridgeConfig = Self::get_config_internal(&env);
         if config.is_paused {
             panic!("Bridge paused");
@@ -126,6 +140,7 @@ impl StellaraBridge {
     }
 
     pub fn add_validator(env: Env, validator: Address) {
+        validate_address(&validator);
         let config: BridgeConfig = Self::get_config_internal(&env);
         config.admin.require_auth();
 
@@ -137,6 +152,7 @@ impl StellaraBridge {
     }
 
     pub fn remove_validator(env: Env, validator: Address) {
+        validate_address(&validator);
         let config: BridgeConfig = Self::get_config_internal(&env);
         config.admin.require_auth();
 
@@ -147,10 +163,12 @@ impl StellaraBridge {
                 new_validators.push_back(v);
             }
         }
+
         env.storage().persistent().set(&symbol_short!("validator"), &new_validators);
     }
 
     pub fn set_rate_limit(env: Env, asset: Address, limit: i128, window: u64) {
+        validate_address(&asset);
         let config: BridgeConfig = Self::get_config_internal(&env);
         config.admin.require_auth();
 
@@ -205,5 +223,24 @@ impl StellaraBridge {
         if (validators.len() as u32) < threshold {
             panic!("Not enough registered validators");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use soroban_sdk::{testutils::Address as _, Address, Env};
+
+    #[test]
+    fn initialize_rejects_nonexistent_fee_collector() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, StellaraBridge);
+        let client = StellaraBridgeClient::new(&env, &contract_id);
+        let admin = env.register_contract(None, StellaraBridge);
+        let nonexistent_fee_collector = Address::generate(&env);
+
+        assert!(client
+            .try_initialize(&admin, &nonexistent_fee_collector, &1, &1)
+            .is_err());
     }
 }
