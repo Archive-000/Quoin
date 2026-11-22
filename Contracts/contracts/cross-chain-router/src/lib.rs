@@ -8,6 +8,12 @@ use soroban_sdk::{contract, contractimpl, contracttype, Env, Symbol, Vec, BytesN
 #[contract]
 pub struct CrossChainRouter;
 
+fn validate_address(address: &Address) {
+    if !address.exists() {
+        panic!("invalid address");
+    }
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct Message {
@@ -81,6 +87,8 @@ pub struct FeeCollectedEvent {
 #[contractimpl]
 impl CrossChainRouter {
     pub fn init(env: Env, admin: Address) {
+        validate_address(&admin);
+
         env.storage()
             .persistent()
             .set(&Symbol::new(&env, "admin"), &admin);
@@ -100,6 +108,7 @@ impl CrossChainRouter {
     }
 
     pub fn set_chain_id(env: Env, admin: Address, chain_id: u32) {
+        validate_address(&admin);
         admin.require_auth();
         NonceManager::set_chain_id(&env, chain_id);
     }
@@ -108,6 +117,7 @@ impl CrossChainRouter {
     /// Until at least one chain is registered every candidate is accepted, so
     /// existing single-chain deployments keep working.
     pub fn add_supported_chain(env: Env, admin: Address, chain_id: u32) {
+        validate_address(&admin);
         admin.require_auth();
 
         let mut chains: Vec<u32> = env
@@ -141,6 +151,8 @@ impl CrossChainRouter {
         recipient: Address,
         payload: Bytes,
     ) -> BytesN<32> {
+        validate_address(&sender);
+        validate_address(&recipient);
         sender.require_auth();
         ReentrancyGuard::enter(&env);
 
@@ -337,6 +349,7 @@ impl CrossChainRouter {
     }
 
     pub fn set_fees(env: Env, admin: Address, base_fee: i128, gas_fee: i128) {
+        validate_address(&admin);
         admin.require_auth();
 
         let mut fee_accounting: FeeAccounting = env
@@ -390,6 +403,7 @@ impl CrossChainRouter {
         validator_address: Address,
         staked_amount: i128,
     ) -> bool {
+        validate_address(&validator_address);
         validator_address.require_auth();
         ReentrancyGuard::enter(&env);
 
@@ -424,6 +438,7 @@ impl CrossChainRouter {
         validator_address: Address,
         slash_percentage: u64,
     ) -> i128 {
+        validate_address(&validator_address);
         let admin: Address = env
             .storage()
             .persistent()
@@ -556,6 +571,20 @@ mod tests {
     use super::*;
     use soroban_sdk::{Env, testutils::Address as _, Address, BytesN, Bytes};
 
+    fn existing_address(env: &Env) -> Address {
+        env.register_contract(None, CrossChainRouter)
+    }
+
+    #[test]
+    fn test_init_rejects_nonexistent_admin_address() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, CrossChainRouter);
+        let client = CrossChainRouterClient::new(&env, &contract_id);
+        let nonexistent_admin = Address::generate(&env);
+
+        assert!(client.try_init(&nonexistent_admin).is_err());
+    }
+
     #[test]
     fn test_initiate_message() {
         let env = Env::default();
@@ -563,12 +592,12 @@ mod tests {
         let contract_id = env.register_contract(None, CrossChainRouter);
         let client = CrossChainRouterClient::new(&env, &contract_id);
 
-        let admin = Address::generate(&env);
+        let admin = existing_address(&env);
         client.init(&admin);
         client.set_chain_id(&admin, &0u32);
 
-        let sender = Address::generate(&env);
-        let recipient = Address::generate(&env);
+        let sender = existing_address(&env);
+        let recipient = existing_address(&env);
         let payload = Bytes::from_array(&env, &[1, 2, 3]);
 
         client.initiate_message(&0, &1, &sender, &recipient, &payload);
@@ -581,7 +610,7 @@ mod tests {
         let contract_id = env.register_contract(None, CrossChainRouter);
         let client = CrossChainRouterClient::new(&env, &contract_id);
 
-        let admin = Address::generate(&env);
+        let admin = existing_address(&env);
         client.init(&admin);
 
         let header = LightClientHeader {
@@ -609,7 +638,7 @@ mod tests {
         let contract_id = env.register_contract(None, CrossChainRouter);
         let client = CrossChainRouterClient::new(&env, &contract_id);
 
-        let admin = Address::generate(&env);
+        let admin = existing_address(&env);
         client.init(&admin);
 
         let payload = Bytes::from_array(&env, &[1u8; 32]);
@@ -627,7 +656,7 @@ mod tests {
         let contract_id = env.register_contract(None, CrossChainRouter);
         let client = CrossChainRouterClient::new(&env, &contract_id);
 
-        let admin = Address::generate(&env);
+        let admin = existing_address(&env);
         client.init(&admin);
 
         client.set_fees(&admin, &100i128, &50i128);
@@ -646,7 +675,7 @@ mod tests {
         let contract_id = env.register_contract(None, CrossChainRouter);
         let client = CrossChainRouterClient::new(&env, &contract_id);
 
-        let admin = Address::generate(&env);
+        let admin = existing_address(&env);
         client.init(&admin);
 
         let payload = Bytes::from_array(&env, &[1u8; 32]);
@@ -662,14 +691,18 @@ mod tests {
 mod adversarial_tests {
     use super::*;
     use soroban_sdk::{
-        testutils::{Address as _, Ledger},
+        testutils::Ledger,
         Address, Bytes, Env,
     };
+
+    fn existing_address(env: &Env) -> Address {
+        env.register_contract(None, CrossChainRouter)
+    }
 
     fn setup_contract(env: &Env) -> CrossChainRouterClient<'_> {
         let contract_id = env.register_contract(None, CrossChainRouter);
         let client = CrossChainRouterClient::new(env, &contract_id);
-        let admin = Address::generate(env);
+        let admin = existing_address(env);
         client.init(&admin);
         client
     }
@@ -682,8 +715,8 @@ mod adversarial_tests {
 
         let client = setup_contract(&env);
 
-        let sender = Address::generate(&env);
-        let recipient = Address::generate(&env);
+        let sender = existing_address(&env);
+        let recipient = existing_address(&env);
         let payload = Bytes::from_array(&env, &[7u8; 32]);
         let message_id = client.initiate_message(&0, &1, &sender, &recipient, &payload);
 
@@ -712,10 +745,10 @@ mod adversarial_tests {
         env.mock_all_auths();
 
         let client = setup_contract(&env);
-        client.set_chain_id(&Address::generate(&env), &1u32);
+        client.set_chain_id(&existing_address(&env), &1u32);
 
-        let sender = Address::generate(&env);
-        let recipient = Address::generate(&env);
+        let sender = existing_address(&env);
+        let recipient = existing_address(&env);
         let payload = Bytes::from_array(&env, &[8u8; 32]);
         client.initiate_message(&1, &2, &sender, &recipient, &payload);
     }
@@ -727,7 +760,7 @@ mod adversarial_tests {
         env.mock_all_auths();
 
         let client = setup_contract(&env);
-        let admin = Address::generate(&env);
+        let admin = existing_address(&env);
 
         client.set_fees(&admin, &100i128, &25i128);
 
