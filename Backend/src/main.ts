@@ -53,6 +53,15 @@ async function bootstrap() {
       : ['error', 'warn', 'log', 'debug'],
   });
 
+  const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  app.enableCors({
+    origin: corsOrigins,
+    credentials: true,
+  });
+
   app.useLogger(app.get(LoggingService));
   app.enableShutdownHooks();
 

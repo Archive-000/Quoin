@@ -1,5 +1,7 @@
 import {
   Controller,
+  MessageEvent,
+  Sse,
   Get,
   Post,
   Body,
@@ -8,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { interval, map, merge, Observable } from 'rxjs';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { MarketDataService } from '../services/market-data.service';
 import { NewsService } from '../services/news.service';
@@ -72,6 +75,15 @@ export class MarketDataController {
 
     this.logger.debug(`Fetching market snapshot (bypassCache: ${bypassCache})`);
     return this.marketDataService.getMarketSnapshot(assetFilter, bypassCache);
+  }
+
+  @Sse('stream')
+  @ApiOperation({ summary: 'Stream refreshed all-asset snapshots' })
+  streamMarketSnapshots(): Observable<MessageEvent> {
+    return merge(
+      this.marketDataService.snapshotUpdates.pipe(map((data) => ({ type: 'snapshot', data }))),
+      interval(15_000).pipe(map(() => ({ type: 'heartbeat', data: '{}' }))),
+    );
   }
 
   /**
