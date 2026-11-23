@@ -41,4 +41,10 @@ export class AiService {
       };
     }
   }
+
+  async handleBatch(prompts: string[], userId?: string) {
+    return Promise.all(
+      prompts.map((prompt) => this.handlePrompt({ prompt, userId })),
+    );
+  }
 }
