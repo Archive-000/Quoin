@@ -3,16 +3,14 @@ import {
   Get,
   Post,
   Param,
-  Body,
   Query,
-  UseGuards,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like } from 'typeorm';
 import { Workflow } from '../entities/workflow.entity';
 import { WorkflowStep } from '../entities/workflow-step.entity';
-import { WorkflowState } from '../types/workflow-state.enum';
 import { StepState } from '../types/step-state.enum';
 import { WorkflowExecutionService } from '../services/workflow-execution.service';
 import { CompensationService } from '../services/compensation.service';
@@ -27,6 +25,11 @@ import {
   ApiErrorCode,
 } from '../../common/exceptions/api-error.exception';
 import { HttpStatus } from '@nestjs/common';
+import {
+  GetWorkflowsQueryDto,
+  SearchWorkflowsQueryDto,
+  WorkflowMetricsQueryDto,
+} from '../dto/workflow-query.dto';
 
 @ApiTags('workflow-admin')
 @Controller('admin/workflows')
@@ -45,14 +48,10 @@ export class WorkflowAdminController {
   @Get()
   @ApiOperation({ summary: 'Get all workflows with pagination and filtering' })
   @ApiResponse({ status: 200, description: 'List of workflows' })
-  async getWorkflows(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-    @Query('state') state?: WorkflowState,
-    @Query('type') type?: string,
-    @Query('userId') userId?: string,
-    @Query('walletAddress') walletAddress?: string,
-  ) {
+  async getWorkflows(@Query() query: GetWorkflowsQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const { state, type, userId, walletAddress } = query;
     const skip = (page - 1) * limit;
     const where: any = {};
 
@@ -80,6 +79,87 @@ export class WorkflowAdminController {
     };
   }
 
+  @Get('search')
+  @ApiOperation({ summary: 'Search workflows by idempotency key or metadata' })
+  @ApiResponse({ status: 200, description: 'Search results' })
+  async searchWorkflows(@Query() query: SearchWorkflowsQueryDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const search = query.q;
+    const skip = (page - 1) * limit;
+
+    const [workflows, total] = await this.workflowRepository.findAndCount({
+      where: [
+        { idempotencyKey: Like(`%${search}%`) },
+        { walletAddress: Like(`%${search}%`) },
+      ],
+      relations: { steps: true },
+      order: { createdAt: 'DESC' },
+      skip,
+      take: limit,
+    });
+
+    return {
+      workflows,
+      query: search,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  @Get('metrics')
+  @ApiOperation({ summary: 'Get workflow metrics and statistics' })
+  @ApiResponse({ status: 200, description: 'Workflow metrics' })
+  async getMetrics(@Query() query: WorkflowMetricsQueryDto) {
+    try {
+      const hours = query.hours ?? 24;
+      const workflowMetrics =
+        await this.monitoringService.getWorkflowMetrics(hours);
+      const stepMetrics = await this.monitoringService.getStepMetrics(hours);
+      const systemHealth = await this.monitoringService.getSystemHealth();
+
+      return {
+        workflowMetrics,
+        stepMetrics,
+        systemHealth,
+      };
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_SERVER_ERROR, error.message);
+    }
+  }
+
+  @Get('health')
+  @ApiOperation({ summary: 'Get workflow engine health status' })
+  @ApiResponse({ status: 200, description: 'Health status' })
+  async getHealth() {
+    try {
+      const health = await this.monitoringService.getSystemHealth();
+      return health;
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_SERVER_ERROR, error.message);
+    }
+  }
+
+  @Get('compensatable')
+  @ApiOperation({ summary: 'Get workflows that require compensation' })
+  @ApiResponse({ status: 200, description: 'Compensatable workflows' })
+  async getCompensatableWorkflows() {
+    try {
+      const workflows =
+        await this.compensationService.getCompensatableWorkflows();
+      return { workflows };
+    } catch (error) {
+      if (error instanceof ApiError) throw error;
+      throw new ApiError(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_SERVER_ERROR, error.message);
+    }
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get workflow by ID' })
   @ApiParam({ name: 'id', description: 'Workflow ID' })
@@ -98,7 +178,7 @@ export class WorkflowAdminController {
       },
     },
   })
-  async getWorkflow(@Param('id') id: string) {
+  async getWorkflow(@Param('id', new ParseUUIDPipe()) id: string) {
     const workflow = await this.workflowRepository.findOne({
       where: { id },
       relations: { steps: true },
@@ -116,7 +196,7 @@ export class WorkflowAdminController {
   @ApiParam({ name: 'id', description: 'Workflow ID' })
   @ApiResponse({ status: 200, description: 'Workflow timeline' })
   @ApiResponse({ status: 404, description: 'Workflow not found' })
-  async getWorkflowTimeline(@Param('id') id: string) {
+  async getWorkflowTimeline(@Param('id', new ParseUUIDPipe()) id: string) {
     const workflow = await this.workflowRepository.findOne({
       where: { id },
       relations: { steps: true },
@@ -239,7 +319,7 @@ export class WorkflowAdminController {
       },
     },
   })
-  async retryWorkflow(@Param('id') id: string) {
+  async retryWorkflow(@Param('id', new ParseUUIDPipe()) id: string) {
     try {
       await this.workflowExecutionService.retryWorkflow(id);
       return { message: 'Workflow retry initiated', workflowId: id };
@@ -268,7 +348,7 @@ export class WorkflowAdminController {
       },
     },
   })
-  async cancelWorkflow(@Param('id') id: string) {
+  async cancelWorkflow(@Param('id', new ParseUUIDPipe()) id: string) {
     try {
       await this.workflowExecutionService.cancelWorkflow(id);
       return { message: 'Workflow cancelled', workflowId: id };
@@ -296,7 +376,7 @@ export class WorkflowAdminController {
       },
     },
   })
-  async compensateWorkflow(@Param('id') id: string) {
+  async compensateWorkflow(@Param('id', new ParseUUIDPipe()) id: string) {
     try {
       await this.compensationService.compensateWorkflow(id);
       return { message: 'Workflow compensation initiated', workflowId: id };
@@ -326,8 +406,8 @@ export class WorkflowAdminController {
     },
   })
   async getWorkflowStep(
-    @Param('id') workflowId: string,
-    @Param('stepId') stepId: string,
+    @Param('id', new ParseUUIDPipe()) workflowId: string,
+    @Param('stepId', new ParseUUIDPipe()) stepId: string,
   ) {
     const step = await this.stepRepository.findOne({
       where: { id: stepId, workflowId },
@@ -348,8 +428,8 @@ export class WorkflowAdminController {
   @ApiResponse({ status: 400, description: 'Step cannot be retried' })
   @ApiResponse({ status: 404, description: 'Step not found' })
   async retryWorkflowStep(
-    @Param('id') workflowId: string,
-    @Param('stepId') stepId: string,
+    @Param('id', new ParseUUIDPipe()) workflowId: string,
+    @Param('stepId', new ParseUUIDPipe()) stepId: string,
   ) {
     const step = await this.stepRepository.findOne({
       where: { id: stepId, workflowId },
@@ -425,39 +505,6 @@ export class WorkflowAdminController {
     };
   }
 
-  @Get('search')
-  @ApiOperation({ summary: 'Search workflows by idempotency key or metadata' })
-  @ApiResponse({ status: 200, description: 'Search results' })
-  async searchWorkflows(
-    @Query('q') query: string,
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 20,
-  ) {
-    const skip = (page - 1) * limit;
-
-    const [workflows, total] = await this.workflowRepository.findAndCount({
-      where: [
-        { idempotencyKey: Like(`%${query}%`) },
-        { walletAddress: Like(`%${query}%`) },
-      ],
-      relations: { steps: true },
-      order: { createdAt: 'DESC' },
-      skip,
-      take: limit,
-    });
-
-    return {
-      workflows,
-      query,
-      pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-      },
-    };
-  }
-
   @Post('recovery/trigger')
   @ApiOperation({ summary: 'Trigger manual recovery process' })
   @ApiResponse({ status: 200, description: 'Recovery process initiated' })
@@ -488,54 +535,6 @@ export class WorkflowAdminController {
     }
   }
 
-  @Get('metrics')
-  @ApiOperation({ summary: 'Get workflow metrics and statistics' })
-  @ApiResponse({ status: 200, description: 'Workflow metrics' })
-  async getMetrics(@Query('hours') hours: number = 24) {
-    try {
-      const workflowMetrics =
-        await this.monitoringService.getWorkflowMetrics(hours);
-      const stepMetrics = await this.monitoringService.getStepMetrics(hours);
-      const systemHealth = await this.monitoringService.getSystemHealth();
-
-      return {
-        workflowMetrics,
-        stepMetrics,
-        systemHealth,
-      };
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      throw new ApiError(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_SERVER_ERROR, error.message);
-    }
-  }
-
-  @Get('health')
-  @ApiOperation({ summary: 'Get workflow engine health status' })
-  @ApiResponse({ status: 200, description: 'Health status' })
-  async getHealth() {
-    try {
-      const health = await this.monitoringService.getSystemHealth();
-      return health;
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      throw new ApiError(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_SERVER_ERROR, error.message);
-    }
-  }
-
-  @Get('compensatable')
-  @ApiOperation({ summary: 'Get workflows that require compensation' })
-  @ApiResponse({ status: 200, description: 'Compensatable workflows' })
-  async getCompensatableWorkflows() {
-    try {
-      const workflows =
-        await this.compensationService.getCompensatableWorkflows();
-      return { workflows };
-    } catch (error) {
-      if (error instanceof ApiError) throw error;
-      throw new ApiError(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.INTERNAL_SERVER_ERROR, error.message);
-    }
-  }
-
   @Post(':id/force-compensate')
   @ApiOperation({ summary: 'Force compensate a workflow (admin only)' })
   @ApiParam({ name: 'id', description: 'Workflow ID' })
@@ -554,7 +553,7 @@ export class WorkflowAdminController {
       },
     },
   })
-  async forceCompensateWorkflow(@Param('id') id: string) {
+  async forceCompensateWorkflow(@Param('id', new ParseUUIDPipe()) id: string) {
     try {
       await this.compensationService.forceCompensateWorkflow(id);
       return { message: 'Force compensation completed', workflowId: id };
