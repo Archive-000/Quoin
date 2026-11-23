@@ -32,6 +32,12 @@ export interface User {
   username: string | null;
   isActive: boolean;
   createdAt: string;
+  /**
+   * Optional avatar image URL returned by the backend profile endpoint.
+   * When absent, or when the image fails to load, the UI falls back to a
+   * deterministic initial-letter badge.
+   */
+  avatarUrl?: string | null;
   wallets: Wallet[];
 }
 
