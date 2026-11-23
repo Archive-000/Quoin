@@ -1,3 +1,4 @@
+import { ConfigService } from '@nestjs/config';
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { AiCacheService } from './cache/ai-cache.service';
 import { QuotaService } from './quota/quota.service';
@@ -17,6 +18,7 @@ export class AiService {
     private readonly quotaService: QuotaService,
     private readonly cache: AiCacheService,
     @Inject(AI_FALLBACK_PROVIDER) private readonly provider: AiProvider,
+    private readonly config: ConfigService,
   ) {}
 
   async handlePrompt(dto: AiRequestDto) {
@@ -31,10 +33,11 @@ export class AiService {
         `prompt must be at most ${AI_PROMPT_MAX_LENGTH} characters`,
       );
     }
-    if (userId && (
-      userId.length > AI_USER_ID_MAX_LENGTH ||
-      !/^[A-Za-z0-9._:@/-]+$/.test(userId)
-    )) {
+    if (
+      userId &&
+      (userId.length > AI_USER_ID_MAX_LENGTH ||
+        !/^[A-Za-z0-9._:@/-]+$/.test(userId))
+    ) {
       throw new BadRequestException('userId is invalid');
     }
 
@@ -42,7 +45,8 @@ export class AiService {
       await this.quotaService.assertQuota(userId);
     }
 
-    const cacheKey = this.cache.buildKey(prompt, 'gpt-4');
+    const model = this.config.get<string>('OPENAI_MODEL') ?? 'gpt-4';
+    const cacheKey = this.cache.buildKey(prompt, `v2:${model}`);
 
     const cached = await this.cache.get(cacheKey);
     if (cached) {
@@ -52,17 +56,30 @@ export class AiService {
     try {
       const result = await this.provider.generate(prompt);
 
+      if (
+        result.response ===
+        'AI service is temporarily unavailable. Please try again later.'
+      ) {
+        return { response: result.response, degraded: true };
+      }
+
       await this.cache.set(cacheKey, result.response);
       if (userId) {
         await this.quotaService.recordUsage(userId, result.tokensUsed);
       }
 
       return { response: result.response, cached: false };
-    } catch (err) {
+    } catch {
       return {
         response: 'AI service is temporarily unavailable. Please try again later.',
         degraded: true,
       };
     }
+  }
+
+  async handleBatch(prompts: string[], userId?: string) {
+    return Promise.all(
+      prompts.map((prompt) => this.handlePrompt({ prompt, userId })),
+    );
   }
 }

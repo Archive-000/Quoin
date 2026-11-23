@@ -3,6 +3,7 @@ export const RATE_LIMITS = {
   AUTH: { limit: 5, window: 60 }, // login/register
   MARKET: { limit: 60, window: 60 },
   CHAT: { limit: 30, window: 60 },
+  WEBSOCKET: { limit: 60, window: 60 }, // per user/socket
 };
 
 export const BAN_RULES = {

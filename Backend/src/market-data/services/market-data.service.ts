@@ -1,3 +1,4 @@
+import { ReplaySubject } from 'rxjs';
 import { Injectable, Logger } from '@nestjs/common';
 import { MarketCacheService } from './market-cache.service';
 import { HorizonMarketDataProvider } from './horizon-market-data-provider.service';
@@ -58,6 +59,9 @@ const refreshLocks = new Map<string, boolean>();
 @Injectable()
 export class MarketDataService {
   private readonly logger = new Logger(MarketDataService.name);
+
+  private readonly snapshots = new ReplaySubject<MarketSnapshotDto>(1);
+  readonly snapshotUpdates = this.snapshots.asObservable();
 
   // Circuit breaker state
   private circuitState: CircuitState = CircuitState.CLOSED;
@@ -231,7 +235,9 @@ export class MarketDataService {
         this.cacheService.setLastKnownGood(cacheKey, CacheNamespace.MARKET_SNAPSHOT, snapshot),
       ]);
 
-      return { ...snapshot, cached: false, dataFreshness: 'fresh' };
+      const fresh: MarketSnapshotDto = { ...snapshot, cached: false, dataFreshness: 'fresh' };
+      if (!assetFilter?.length) this.snapshots.next(fresh);
+      return fresh;
     } catch (error) {
       this.recordFailure();
       this.logger.error(`Failed to fetch market snapshot: ${error.message}`);
