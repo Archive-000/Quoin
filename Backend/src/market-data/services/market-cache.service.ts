@@ -390,12 +390,26 @@ export class MarketCacheService {
   // ========== PRIVATE HELPERS ==========
 
   /**
-   * Generate deterministic cache key
+   * Generate deterministic cache key.
+   *
+   * The key contains a sanitised, human-readable segment followed by a short
+   * hash. The readable segment is what makes pattern-based invalidation work:
+   * `invalidateByPattern('USDC', PRICE_DATA)` can now match keys with
+   * `price:data:USDC:*`. A hash-only key would never match a caller-supplied
+   * prefix, which previously left stale data in the cache after updates.
    */
   private generateCacheKey(key: string, namespace: CacheNamespace): string {
-    // Create hash of the key to avoid issues with special characters
+    // Create hash of the key to avoid issues with special characters and to
+    // keep the key unique after sanitising / truncating the readable segment.
     const hash = crypto.createHash('sha256').update(key).digest('hex');
-    return `${namespace}:${hash.substring(0, 16)}`;
+    const readable = key
+      .replace(/[^a-zA-Z0-9:_-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 64);
+
+    return readable
+      ? `${namespace}:${readable}:${hash.substring(0, 16)}`
+      : `${namespace}:${hash.substring(0, 16)}`;
   }
 
   /**

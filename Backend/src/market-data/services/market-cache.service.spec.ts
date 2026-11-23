@@ -181,6 +181,39 @@ describe('MarketCacheService', () => {
       expect(result).toBe(0);
       expect(mockRedisClient.del).not.toHaveBeenCalled();
     });
+
+    it('should build keys that a caller-supplied prefix can match', async () => {
+      mockRedisClient.set.mockResolvedValue('OK');
+      mockRedisClient.incr.mockResolvedValue(1);
+
+      await service.set(
+        'USDC:GISSUER',
+        { price: '1.00' },
+        CacheNamespace.PRICE_DATA,
+      );
+
+      const dataKey = mockRedisClient.set.mock.calls[0][0];
+      expect(dataKey).toMatch(/^price:data:USDC:GISSUER:[a-f0-9]{16}$/);
+
+      const cachedKey = dataKey;
+      mockRedisClient.keys.mockResolvedValueOnce([
+        cachedKey,
+        `${cachedKey}:metadata`,
+      ]);
+      mockRedisClient.del.mockResolvedValue(2);
+
+      const result = await service.invalidateByPattern(
+        'USDC',
+        CacheNamespace.PRICE_DATA,
+      );
+
+      expect(mockRedisClient.keys).toHaveBeenCalledWith('price:data:USDC*');
+      expect(mockRedisClient.del).toHaveBeenCalledWith([
+        cachedKey,
+        `${cachedKey}:metadata`,
+      ]);
+      expect(result).toBe(2);
+    });
   });
 
   describe('invalidateNamespace', () => {
