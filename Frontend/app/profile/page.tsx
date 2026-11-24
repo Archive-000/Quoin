@@ -13,6 +13,56 @@ import {
   type Wallet,
 } from "../lib/auth";
 
+/**
+ * Returns a non-empty display name for a user. Falls back to "U" so the
+ * initial-letter badge is never rendered blank (the previous code used
+ * `??`, which treats `""` as a valid value and produced an empty circle
+ * when the backend returned an empty username/email).
+ */
+function getDisplayName(user: User): string {
+  const username = user.username?.trim();
+  if (username) return username;
+  const email = user.email?.trim();
+  if (email) return email;
+  return "U";
+}
+
+function UserAvatar({ user }: { user: User }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const displayName = getDisplayName(user);
+  const initial = displayName.charAt(0).toUpperCase() || "U";
+  const avatarUrl = user.avatarUrl?.trim();
+
+  if (avatarUrl && !imageFailed) {
+    return (
+      // Plain <img> is intentional: avatar URLs are supplied by the
+      // backend (or the user) and may point at arbitrary hosts that are
+      // not whitelisted for next/image. onError flips back to the
+      // initial-letter badge so a broken URL never leaves an empty
+      // square behind.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={avatarUrl}
+        alt={`${displayName}'s avatar`}
+        referrerPolicy="no-referrer"
+        loading="lazy"
+        decoding="async"
+        className="h-10 w-10 flex-shrink-0 rounded-full bg-cyan-500/20 object-cover"
+        onError={() => setImageFailed(true)}
+      />
+    );
+  }
+
+  return (
+    <div
+      aria-hidden="true"
+      className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-cyan-500/20 font-bold text-cyan-300"
+    >
+      {initial}
+    </div>
+  );
+}
+
 export default function ProfilePage() {
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
@@ -77,7 +127,7 @@ export default function ProfilePage() {
 
         {isLoading && (
           <div className="rounded-2xl border border-white/10 bg-black/20 px-6 py-4 text-white/70">
-            Loading your profile…
+            Loading your profile...
           </div>
         )}
 
@@ -100,12 +150,15 @@ export default function ProfilePage() {
               (request a nonce, sign it, then log in), then paste the returned
               `accessToken` below.
             </p>
-            <form onSubmit={handleLogin} className="flex flex-col gap-3 md:flex-row md:gap-4">
+            <form
+              onSubmit={handleLogin}
+              className="flex flex-col gap-3 md:flex-row md:gap-4"
+            >
               <input
                 type="text"
                 value={newToken}
                 onChange={(event) => setNewToken(event.target.value)}
-                placeholder="Paste access token…"
+                placeholder="Paste access token..."
                 className="flex-1 mt-2 w-full rounded-2xl border border-white/10 bg-black/50 px-4 py-3 text-sm outline-none placeholder:text-white/30 focus:border-cyan-400/40"
               />
               <button
@@ -113,7 +166,7 @@ export default function ProfilePage() {
                 disabled={isLoading}
                 className="rounded-full bg-cyan-300 px-6 py-3 text-sm font-semibold text-black transition hover:bg-cyan-200 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                {isLoading ? "Signing in…" : "Sign in"}
+                {isLoading ? "Signing in..." : "Sign in"}
               </button>
             </form>
           </section>
@@ -123,12 +176,12 @@ export default function ProfilePage() {
           <>
             <section className="rounded-2xl border border-white/10 bg-black/20 px-6 py-6 mb-6">
               <div className="flex items-center gap-4 mb-4">
-                <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-300 font-bold">
-                  {(user.username ?? user.email ?? "U").charAt(0).toUpperCase()}
-                </div>
+                <UserAvatar user={user} />
                 <div>
                   <h2 className="text-lg font-semibold">
-                    {user.username ?? user.email ?? "Unnamed user"}
+                    {user.username?.trim() ||
+                      user.email?.trim() ||
+                      "Unnamed user"}
                   </h2>
                   <p className="text-sm text-white/60 truncate max-w-xs">
                     {user.id}
@@ -152,12 +205,14 @@ export default function ProfilePage() {
                     )}
                     {user.isActive ? "Active" : "Inactive"}
                   </dd>
-                  <dt className="text-xs uppercase text-white/50">Member since</dt>
+                  <dt className="text-xs uppercase text-white/50">
+                    Member since
+                  </dt>
                   <dd>{new Date(user.createdAt).toLocaleDateString()}</dd>
                   <dt className="text-xs uppercase text-white/50">Email</dt>
-                  <dd>{user.email ?? "—"}</dd>
+                  <dd>{user.email ?? "-"}</dd>
                   <dt className="text-xs uppercase text-white/50">Username</dt>
-                  <dd>{user.username ?? "—"}</dd>
+                  <dd>{user.username ?? "-"}</dd>
                 </div>
               </dl>
             </section>
@@ -188,7 +243,7 @@ export default function ProfilePage() {
                         <span className="truncate">
                           {wallet.lastUsed
                             ? new Date(wallet.lastUsed).toLocaleString()
-                            : "—"}
+                            : "-"}
                         </span>
                       </div>
                     </div>
